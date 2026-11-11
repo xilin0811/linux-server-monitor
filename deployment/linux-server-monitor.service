@@ -1,0 +1,18 @@
+
+[Unit]
+Description=Linux Server Monitoring Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=xilin
+Group=xilin
+WorkingDirectory=/home/xilin/projects/linux-server-monitor
+
+ExecStart=/home/xilin/projects/linux-server-monitor/.venv/bin/gunicorn --workers 2 --bind 127.0.0.1:5000 app:app
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
