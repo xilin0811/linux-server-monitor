@@ -1,0 +1,12 @@
+
+[Unit]
+Description=Collect Linux system metrics periodically
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=1s
+Unit=metrics-collector.service
+
+[Install]
+WantedBy=timers.target

@@ -17,3 +17,9 @@ __pycache__/
 # Logs and temporary files
 *.log
 *.save
+
+# SQLite runtime data
+data/
+
+# Testing cache
+.pytest_cache/

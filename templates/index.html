@@ -58,6 +58,54 @@
 
         </section>
 
+        <!-- Historical Monitoring Charts -->
+        <section class="history-section" aria-labelledby="history-heading">
+
+            <div class="history-header">
+                <div>
+                    <h2 id="history-heading">Resource Usage History</h2>
+                    <p>Historical CPU and memory usage from SQLite</p>
+                </div>
+
+                <div class="history-controls">
+                    <label for="history-limit">Show recent samples</label>
+                    <select id="history-limit">
+                        <option value="30">30 samples</option>
+                        <option value="60" selected>60 samples</option>
+                        <option value="120">120 samples</option>
+                        <option value="300">300 samples</option>
+                    </select>
+                </div>
+            </div>
+
+            <p id="history-status" class="history-status" role="status">
+                Loading historical metrics...
+            </p>
+
+            <div class="history-grid">
+
+                <!-- CPU History -->
+                <article class="card history-card">
+                    <h3>CPU Usage History</h3>
+
+                    <div class="chart-wrap">
+                        <canvas id="cpu-history-chart"></canvas>
+                    </div>
+                </article>
+
+                <!-- Memory History -->
+                <article class="card history-card">
+                    <h3>Memory Usage History</h3>
+
+                    <div class="chart-wrap">
+                        <canvas id="memory-history-chart"></canvas>
+                    </div>
+                </article>
+
+            </div>
+
+        </section>
+
         <footer class="footer">
             <p>Linux Server Monitoring Dashboard</p>
             <p id="last-updated">Waiting for first update...</p>
@@ -65,7 +113,13 @@
 
     </main>
 
-    <!-- Load JavaScript -->
-    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+    <!-- Original real-time dashboard -->
+    <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+
+    <!-- Chart.js library (pinned version) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" defer></script>
+
+    <!-- Historical monitoring charts -->
+    <script src="{{ url_for('static', filename='history.js') }}" defer></script>
 </body>
 </html>
