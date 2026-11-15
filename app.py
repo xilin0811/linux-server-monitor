@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, render_template, request
 from monitor import get_system_info
-from database import get_recent_metrics
+from database import get_recent_metrics, is_database_healthy
 
 app = Flask(__name__)
 
@@ -44,6 +44,20 @@ def system_history():
         "count": len(records),
         "metrics": records
     })
+
+@app.route("/api/health", methods=["GET"])
+def health_check():
+
+    if is_database_healthy():
+        return jsonify({
+            "status": "healthy",
+            "database": "ok"
+        }), 200
+
+    return jsonify({
+        "status": "unhealthy",
+        "database": "unavailable"
+    }), 503
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False)

@@ -1,13 +1,13 @@
 # Linux Deployment Guide / Linux 部署教學
 
-> **Version / 版本：** v0.3 — Gunicorn + Nginx + systemd (**Completed / 已完成**)  
+> **Version / 版本：** v0.4 — Monitoring & Reliability (**Completed / 已完成**)  
 > **Audience / 適用對象：** Ubuntu / Linux 初學者、系統部署學習者
 
 ## Overview / 文件目的
 
-This guide explains how to deploy the Linux Server Monitoring Dashboard using **Gunicorn**, **Nginx**, and **systemd** on Ubuntu.
+This guide documents deployment and verification of the Linux Server Monitoring Dashboard on Ubuntu: **Gunicorn + Nginx + systemd** (v0.3), extended with **SQLite history, a systemd Timer, Chart.js, health checks, logging, data retention, and pytest** (v0.4).
 
-本文記錄從安裝 Python 套件、測試 Gunicorn、設定 Nginx Reverse Proxy，到使用 systemd 管理背景服務的完整流程。每一步提供**指令、用途、預期結果及常見錯誤**，方便重建環境與排除問題。
+本文完整保留 v0.3 的 Gunicorn、Nginx、systemd 部署流程，並補充 v0.4 的 SQLite 歷史監控、自動收集、歷史 API、折線圖、健康檢查、Logging、資料保留策略及 pytest 自動化測試。各節提供**指令、用途、預期結果與故障排除方法**，以便在 Ubuntu 上重建與驗證專案。
 
 ### Tested Environment / 使用環境
 
@@ -17,13 +17,16 @@ This guide explains how to deploy the Linux Server Monitoring Dashboard using **
 - Gunicorn and Nginx
 - systemd / journalctl
 - VS Code Remote SSH
+- SQLite (Python `sqlite3` standard library)
+- Python `logging` and pytest (development/testing)
+- Chart.js for historical charts (loaded via CDN in the current frontend)
 
-> **Environment note / 環境提醒：** Example paths use Linux user `xilin` and `/home/xilin/projects/linux-server-monitor`. These values belong to the original learning VM and must be adjusted on other machines. Deployment and reboot/recovery tests were completed in the original Ubuntu VMware environment. / 以下指令中的使用者與絕對路徑為原始測試環境設定，移植時須調整；本版已完成原始 VM 的部署與恢復驗證。
+> **Environment note / 環境提醒：** Example paths use Linux user `xilin` and `/home/xilin/projects/linux-server-monitor`. These values belong to the original learning VM and must be adjusted on other machines. The author reports that the v0.3 deployment and v0.4 functionality/tests were verified in the original Ubuntu VMware environment; this document is not an independent verification of a live machine. / 以下指令中的帳號與絕對路徑為原始測試環境設定，移植時須調整。v0.3 與 v0.4 完成狀態依專案作者回報的測試結果記錄，非本文件重新遠端實測。
 
 ### Deployment Architecture / 部署架構
 
 ```text
-Windows Browser
+Windows Browser (Dashboard + CPU / RAM history charts)
       |
       | HTTP :80
       v
@@ -31,18 +34,28 @@ Ubuntu / Nginx (Reverse Proxy)
       |
       | HTTP 127.0.0.1:5000
       v
-Gunicorn (WSGI Server) <--- systemd manages this process
+Gunicorn (managed by linux-server-monitor.service)
       |
       v
-Flask Application (app.py)
-      |
-      v
-monitor.py -> psutil -> Linux system metrics
+Flask (app.py)
+      |-- GET /api/system  -> monitor.py -> psutil (real-time metrics)
+      |-- GET /api/history -> database.py -> SQLite history
+      |-- GET /api/health  -> SQLite availability check
+      `-- GET /           -> HTML + JavaScript + Chart.js
 
-journalctl -> reads logs from the systemd journal
+systemd metrics-collector.timer (approximately every 30 seconds)
+      |
+      v
+metrics-collector.service (Type=oneshot)
+      |
+      v
+collect_once.py -> monitor.py -> database.py -> data/metrics.db
+                                     `-> 7-day retention cleanup
+
+journalctl <- Gunicorn service logs / collector Python logging
 ```
 
-**中文解說：** Nginx 是對外的 HTTP 入口，Gunicorn 負責執行 Python Flask，Flask 提供畫面和 API。systemd 負責管理 Gunicorn 的生命週期，`journalctl` 用來查詢服務日誌。**systemd 不會取代 Nginx 或 Gunicorn。**
+**中文解說：** Nginx 是對外的 HTTP 入口，Gunicorn 執行 Flask；`linux-server-monitor.service` 管理長時間運作的 Web 服務。另一條獨立路徑由 `metrics-collector.timer` 定時觸發一次性的資料收集服務，把 psutil 數據寫入 SQLite。`/api/history` 從 SQLite 讀取歷史紀錄，Chart.js 在瀏覽器畫圖；`journalctl` 用來查詢服務日誌。**systemd 不會取代 Nginx 或 Gunicorn；Collector 也不需要在每個 Gunicorn Worker 裡執行。**
 
 ---
 
@@ -69,11 +82,19 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies / 安裝依賴套件：
+Install runtime dependencies / 安裝執行環境依賴套件：
 
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+For v0.4 development and automated tests / 如要執行 v0.4 自動化測試，另外安裝：
+
+```bash
+python -m pip install -r requirements-dev.txt
+```
+
+`sqlite3` and `logging` belong to the Python standard library, so no separate `pip install sqlite3` is required. / `sqlite3` 和 `logging` 是 Python 標準函式庫，不需要額外以 pip 安裝。
 
 Verify Gunicorn / 確認已安裝：
 
@@ -89,7 +110,7 @@ gunicorn --version
 
 ## 2. Test Gunicorn Manually / 手動測試 Gunicorn
 
-Start Gunicorn / 啟動：
+Start Gunicorn only when the systemd-managed instance is stopped; otherwise both processes compete for port 5000. / **僅在 systemd 管理的 Gunicorn 已停止時，才手動啟動下列指令**，否則可能佔用同一個 Port 5000：
 
 ```bash
 gunicorn --workers 2 --bind 127.0.0.1:5000 app:app
@@ -158,11 +179,10 @@ sudo ln -s /etc/nginx/sites-available/linux-server-monitor /etc/nginx/sites-enab
 Validate before reloading / 先測試，再重新載入：
 
 ```bash
-sudo nginx -t
-sudo systemctl reload nginx
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-只有在 `nginx -t` 成功時才執行 `reload`。
+`&&` 表示前一個指令成功才執行下一個，避免錯誤設定直接被載入。
 
 ### Reverse Proxy Configuration / 反向代理重點
 
@@ -479,10 +499,13 @@ sudo journalctl -u linux-server-monitor -b --no-pager
 - HTTP traffic is not protected by TLS.（目前是 HTTP，不是 HTTPS。）
 - **Do not expose this test deployment to the public internet.**（請勿將目前無驗證的監控網站直接對外公開。）
 - Review file paths, permissions, and firewall rules before deploying elsewhere.（搬移到其他機器前需檢查路徑、權限與防火牆。）
+- SQLite records contain local system usage history. Keep `data/` ignored by Git and restrict filesystem access.（資料庫包含主機資源使用歷史；請勿提交到 GitHub，並控制檔案權限。）
+- `/api/history` and `/api/health` are also unauthenticated in v0.4.（v0.4 新增的 API 亦未加入登入驗證。）
+- Chart.js is loaded via a third-party CDN in this implementation; offline operation needs a local copy.（目前圖表依賴外部 CDN；若需要離線執行，應改用本地靜態檔案。）
 
 ---
 
-## 10. Deployment Verification Record / 部署驗收紀錄
+## 10. v0.3 Deployment Verification Record / v0.3 部署驗收紀錄
 
 The following checks were completed in the original Ubuntu VMware learning environment and are recorded here as the v0.3 milestone results. / 以下為專案作者在原始 Ubuntu VMware 環境中完成的 v0.3 驗收紀錄，不是待辦清單。
 
@@ -503,16 +526,405 @@ The following checks were completed in the original Ubuntu VMware learning envir
 
 **Result / 結論：** All v0.3 verification items passed as reported by the project author. / 依專案作者完成的實機測試紀錄，v0.3 驗收項目均已通過。
 
-## 11. Future Work / 後續規劃
+## 11. v0.4 Historical Data Storage / SQLite 歷史資料儲存
 
-This deployment guide documents the completed v0.3 configuration. Future versions may add historical metric storage and charts, automated health checks and tests, Docker deployment, GitHub Actions CI/CD, and improved authentication and HTTPS support.
+### Purpose / 功能目的
 
-本文件記錄已完成的 v0.3 部署流程；後續規劃包括監控歷史數據、健康檢查與自動化測試、Docker 容器化、GitHub Actions CI/CD，以及身分驗證與 HTTPS 安全機制。這些項目尚未包含在 v0.3 版本中。
+v0.4 adds persistent resource-usage history. Unlike `/api/system`, which reads current values directly through psutil, the historical data is stored as rows in SQLite and remains available after the Flask service is restarted.
+
+v0.4 新增 SQLite 歷史監控資料庫：即時監控仍由 `/api/system` 呼叫 psutil，而歷史監控資料則由獨立 Collector 寫入 SQLite。重啟 Flask 或重新整理網頁，不會清除已保存的資料。
+
+| File / 檔案 | Responsibility / 功能 |
+|---|---|
+| `monitor.py` | Collects live CPU, memory, and disk metrics / 取得即時 Linux 系統數值 |
+| `database.py` | Initializes SQLite; writes, queries, checks and cleans up metrics / 建表、寫入、查詢、健康檢查與刪除過期資料 |
+| `collect_once.py` | Collects and saves one record per execution / 每次執行保存一筆監控紀錄 |
+| `data/metrics.db` | Runtime SQLite database; excluded from Git / 執行時資料庫，不上傳 GitHub |
+| `.gitignore` | Ignores `data/`, virtual environment and Python caches / 忽略執行時資料 |
+
+**Storage path / 路徑：** `/home/xilin/projects/linux-server-monitor/data/metrics.db`. The program constructs the path from its source location, so the collector does not depend on the Terminal's current directory. / 程式使用專案來源檔案位置組合資料庫絕對路徑，降低工作目錄不同造成找錯資料庫的問題。
+
+### Database Schema / 資料表結構
+
+The `init_database()` function in `database.py` creates `system_metrics` when needed. / `database.py` 使用 `init_database()` 建立資料表。
+
+```sql
+CREATE TABLE IF NOT EXISTS system_metrics (
+    id INTEGER PRIMARY KEY,
+    collected_at INTEGER NOT NULL,
+    cpu_percent REAL NOT NULL,
+    memory_percent REAL NOT NULL,
+    disk_percent REAL NOT NULL
+);
+```
+
+`collected_at` is a Unix timestamp in seconds, and the other metric values are percentages. / `collected_at` 使用以秒為單位的 Unix Timestamp，其他欄位保存百分比。
+
+The project also creates an index on `collected_at` to support time-based queries. / 專案在時間欄位建立索引，方便後續歷史資料查詢。
+
+### Manual Collection / 手動收集一筆資料
+
+Run these commands from the repository root / 在專案根目錄執行：
+
+```bash
+cd ~/projects/linux-server-monitor
+source .venv/bin/activate
+python collect_once.py
+```
+
+**Expected / 預期：** An INFO log reports the newly saved record and usage values; running the collector once creates one new sample and then exits. / 一次執行新增一筆資料後結束，並顯示 INFO 日誌。正常情況下不會持續佔用 Terminal。
+
+Verify that SQLite exists and query the latest records / 確認資料庫及最新紀錄：
+
+```bash
+ls -lh data/metrics.db
+python -m sqlite3 data/metrics.db "SELECT COUNT(*) FROM system_metrics;"
+python -m sqlite3 data/metrics.db "SELECT id, datetime(collected_at, 'unixepoch', 'localtime'), cpu_percent, memory_percent, disk_percent FROM system_metrics ORDER BY id DESC LIMIT 5;"
+```
+
+**Command notes / 指令說明：** `python -m sqlite3` runs the SQLite CLI module available with the Ubuntu Python 3.12 environment. `COUNT(*)` counts rows; `ORDER BY id DESC LIMIT 5` displays the five latest inserted samples; the `datetime(..., 'localtime')` expression renders the timestamp using the Ubuntu machine's local timezone. / 上述指令分別用於查總筆數、最新五筆以及將時間戳轉換為本機時間。
+
+> **Version-control note / 版本控制提醒：** Keep `database.py` and `collect_once.py` in Git; do not commit `data/metrics.db` or its backups. Running `git check-ignore -v data/metrics.db` should identify the ignore rule. / Git 需追蹤程式碼，不需追蹤每隔一段時間就改變的監控資料庫。
+
+---
+
+## 12. Automated Metrics Collection / 使用 systemd Timer 自動收集
+
+### Separate Service and Timer / 獨立的收集服務與排程
+
+The Gunicorn service is a long-running `Type=simple` process. The collector is different: it executes once, saves a record, and exits, so it uses `Type=oneshot`. The timer triggers this oneshot service periodically.
+
+Gunicorn 是持續運作的 Web Service；Collector 只需要執行一次並結束，所以採用 `Type=oneshot`。**Timer 負責排程，Service 負責實際執行 Python。** 將收集工作與兩個 Gunicorn Workers 分離，也能避免重複啟動收集迴圈。
+
+The repository contains / 專案中包含：
+
+- `deployment/metrics-collector.service`
+- `deployment/metrics-collector.timer`
+
+### Collector Service Unit / 收集服務設定
+
+```ini
+[Unit]
+Description=Collect Linux system metrics into SQLite
+
+[Service]
+Type=oneshot
+User=xilin
+Group=xilin
+WorkingDirectory=/home/xilin/projects/linux-server-monitor
+ExecStart=/home/xilin/projects/linux-server-monitor/.venv/bin/python /home/xilin/projects/linux-server-monitor/collect_once.py
+```
+
+| Setting / 欄位 | Explanation / 解釋 |
+|---|---|
+| `Type=oneshot` | Run one collection and exit / 執行單次收集後結束 |
+| `User` and `Group` | Run as a non-root user / 使用一般帳號執行 |
+| `WorkingDirectory` | Set the project directory / 設定工作目錄 |
+| `ExecStart` | Use the Python interpreter inside `.venv` / 使用虛擬環境的 Python 絕對路徑 |
+
+**Expected behavior / 預期狀態：** After a successful run, `metrics-collector.service` may display `inactive (dead)`; unlike Gunicorn, this is normal for a oneshot service. Confirm `Result=success` and `ExecMainStatus=0` instead. / 單次執行成功後顯示 `inactive (dead)` 不代表出錯。
+
+### Timer Unit / 排程設定
+
+```ini
+[Unit]
+Description=Collect Linux system metrics periodically
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=1s
+Unit=metrics-collector.service
+
+[Install]
+WantedBy=timers.target
+```
+
+| Setting / 欄位 | Explanation / 解釋 |
+|---|---|
+| `OnBootSec=1min` | First trigger is based on system boot time / 依開機時間安排首次執行 |
+| `OnUnitInactiveSec=30s` | Trigger about 30 seconds after the previous service finishes / 前次任務結束約 30 秒後再次觸發 |
+| `AccuracySec=1s` | Timer accuracy window; not a hard real-time guarantee / 設定排程精度視窗，不保證完全準時 |
+| `Unit=metrics-collector.service` | Service triggered by this timer / 指定被觸發的服務 |
+| `WantedBy=timers.target` | Allow the timer to be enabled at boot / 讓 Timer 可設定開機啟用 |
+
+**Interval clarification / 間隔提醒：** 30 seconds here is counted after a service run becomes inactive, not necessarily exactly 30 seconds between sample timestamps. The timer runs only while the VM is running; it does not power on VMware. / 本設定不是嚴格固定每 30 秒採樣，也不會在 VM 關機時補齊每一筆遺漏資料。
+
+### Install and Enable / 安裝及啟用
+
+Check the paths and account in the Unit Files before running `sudo cp`. Existing files at the destination will be overwritten. / 複製前先檢查帳號與路徑，並注意 `cp` 會覆蓋同名設定檔。
+
+```bash
+cd ~/projects/linux-server-monitor
+ls -l deployment/metrics-collector.service deployment/metrics-collector.timer
+sudo cp deployment/metrics-collector.service /etc/systemd/system/
+sudo cp deployment/metrics-collector.timer /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/metrics-collector.service
+sudo systemd-analyze verify /etc/systemd/system/metrics-collector.timer
+sudo systemctl daemon-reload
+```
+
+**First validate the oneshot service / 先手動驗證一次性收集服務：**
+
+```bash
+sudo systemctl start metrics-collector.service
+systemctl status metrics-collector.service --no-pager
+systemctl show metrics-collector.service -p Result -p ExecMainStatus
+```
+
+**Expected / 預期：** `Result=success`, `ExecMainStatus=0`; SQLite gains one row. / 服務上次執行成功，且資料庫新增一筆監控紀錄。
+
+**Then enable the timer / 再啟用排程：**
+
+```bash
+sudo systemctl enable --now metrics-collector.timer
+systemctl status metrics-collector.timer --no-pager
+systemctl list-timers --all | grep metrics-collector
+```
+
+**Expected / 預期：** Timer displays `active (waiting)` and a scheduled NEXT time. / Timer 顯示 `active (waiting)`，並可查到下一次預定觸發時間。
+
+After a few collection cycles, run the SQL count query again; the row count should increase. / 經過數個週期再查詢 SQLite 筆數，應能看到紀錄數量增加。
+
+---
+
+## 13. REST APIs and Historical Charts / API 與歷史折線圖
+
+### API Reference / API 一覽
+
+| Endpoint | Data source / 資料來源 | Purpose / 功能 |
+|---|---|---|
+| `GET /` | Flask templates and static files | Dashboard 網頁 |
+| `GET /api/system` | `monitor.py` / psutil | 即時 CPU、RAM、Disk、Uptime |
+| `GET /api/history` | SQLite / `database.py` | 歷史監控資料，預設最多 60 筆 |
+| `GET /api/history?limit=5` | SQLite / `database.py` | 讀取最近五筆，按時間由舊到新排列 |
+| `GET /api/health` | Flask + SQLite query | 基本健康檢查（資料表可讀性） |
+
+### History API / 歷史資料 API
+
+```bash
+curl -i "http://127.0.0.1/api/history?limit=5"
+curl -sS "http://127.0.0.1/api/history?limit=5" | python -m json.tool
+```
+
+**Expected / 預期：** HTTP 200 and JSON containing `count` and a `metrics` array. Each record includes `id`, `collected_at`, `cpu_percent`, `memory_percent`, and `disk_percent`. Records are sorted oldest to newest within the requested latest N samples. / 回傳本次查詢的筆數與時間升序的歷史紀錄，方便繪製折線圖。
+
+The Flask route validates `limit` as an integer from **1 to 300**. An invalid value returns HTTP 400. / `limit` 僅接受 1～300 的整數；不合法時回傳 HTTP 400。
+
+```bash
+curl -i "http://127.0.0.1/api/history?limit=abc"
+curl -i "http://127.0.0.1/api/history?limit=0"
+```
+
+**Expected / 預期：** Both return `400 Bad Request`. / 兩者皆應回傳 HTTP 400。
+
+### Health API / 健康檢查 API
+
+```bash
+curl -i http://127.0.0.1/api/health
+```
+
+Successful example / 成功的回傳範例：
+
+```json
+{
+  "status": "healthy",
+  "database": "ok"
+}
+```
+
+**Expected / 預期：** HTTP 200 when the expected SQLite database file and table can be queried. A database-check failure returns HTTP 503 with `status: unhealthy`. / 資料庫檔案存在且指定資料表可讀時回傳 HTTP 200；檢查失敗則回傳 HTTP 503。
+
+**Limitation / 限制：** This is a basic availability/readability check, **not** a writeability check, full database integrity check, or guarantee that the systemd Timer has recently collected new samples. / 此 API 僅檢查基本可讀性，**不代表資料庫一定可寫入，也不代表 Collector 最近有成功執行**。若要驗證收集新鮮度，仍須查看 SQLite 時間戳與 Timer 日誌。
+
+### Browser Charts / 前端歷史折線圖
+
+The existing real-time cards remain on the Dashboard and update approximately every **5 seconds**. v0.4 additionally uses `static/history.js` and Chart.js to fetch `/api/history` approximately every **30 seconds**, rendering historical CPU and memory charts below the live cards.
+
+原本四張即時卡片維持約每 5 秒更新；新增的 Chart.js CPU／Memory 折線圖約每 30 秒向 `/api/history` 重新查詢資料。頁面可選擇最近 30、60、120、300 筆。這些代表**筆數**，不是保證固定時間長度。
+
+Chart.js is currently loaded from a CDN; if the browser has no internet access, live cards and APIs can still work while the history charts may not render. / Chart.js 目前透過 CDN 載入；若瀏覽器無法存取外部 CDN，圖表可能無法顯示，但即時監控與 API 不一定受到影響。
+
+**Browser validation / 網頁驗證：** Open `http://<UBUNTU_IP>/` on Windows, hard refresh (`Ctrl + Shift + R`), verify both charts, change the sample-count selector, and confirm the live cards still update. / 從 Windows 進入網頁、強制重新整理、切換顯示筆數並確認原本即時監控正常。
+
+---
+
+## 14. Logging, Retention, and Backup / 日誌、資料保留與備份
+
+### Collector Logging / 收集程式日誌
+
+`collect_once.py` uses Python `logging` (INFO for successful collection and ERROR/traceback on failure). Its output is captured by the oneshot systemd service and can be inspected with `journalctl`.
+
+Collector 使用 Python `logging` 記錄收集成功的 ID 與資源數值；如發生例外則記錄 Traceback，並將錯誤重新拋出，使 systemd 能辨認任務失敗。
+
+```bash
+sudo journalctl -u metrics-collector.service -n 30 --no-pager
+sudo journalctl -u metrics-collector.service -b --no-pager
+sudo journalctl -u metrics-collector.service -f
+```
+
+`-u` selects the Unit, `-n` limits the recent entries, `-b` limits logs to the current boot, and `-f` follows new entries (quit with `Ctrl + C`). / `-u` 指定服務、`-n` 查最近日誌、`-b` 限本次開機、`-f` 即時追蹤。
+
+### Seven-Day Retention / 七天保留策略
+
+v0.4 calls `delete_old_metrics(days=7)` after saving a sample. Its SQL deletion condition is based on timestamps older than the last seven days. / Collector 每次成功寫入後，呼叫 `delete_old_metrics(days=7)` 清理超過七天的歷史紀錄。
+
+```sql
+DELETE FROM system_metrics
+WHERE collected_at < ?;
+```
+
+The placeholder is populated with `current Unix time - (7 * 24 * 60 * 60)`. / 以目前 Unix 時間減去七天的秒數計算刪除門檻，使用 SQL 參數避免拼接字串。
+
+**Important / 注意：** The deletion affects the actual database, so back up before testing retention against meaningful real records. The deletion may not immediately reduce the physical `.db` file size because SQLite may reuse freed pages. / SQL 刪除會真的移除紀錄，測試前先備份；刪除後 `.db` 檔案大小不一定立即縮小，這是 SQLite 頁面重用機制造成的正常現象。
+
+### SQLite Backup / 備份資料庫
+
+Use SQLite's backup API to obtain a consistent copy while the Collector may be writing. / Collector 運作期間，使用 SQLite Backup API 備份，避免直接複製資料庫檔案造成不一致。
+
+```bash
+cd ~/projects/linux-server-monitor
+source .venv/bin/activate
+python - <<'PYBACKUP'
+import sqlite3
+from pathlib import Path
+
+source = Path('data/metrics.db')
+target = Path('data/metrics-backup.db')
+
+src = sqlite3.connect(source)
+dst = sqlite3.connect(target)
+try:
+    src.backup(dst)
+finally:
+    dst.close()
+    src.close()
+
+print(f'Backup completed: {target}')
+PYBACKUP
+```
+
+**Expected / 預期：** `Backup completed: data/metrics-backup.db`. Both the original database and backup remain inside the Git-ignored `data/` directory. / 原始與備份資料庫均留在被 Git 忽略的資料夾內。
+
+---
+
+## 15. Automated Tests / pytest 自動化測試
+
+### Install Development Dependencies / 安裝測試套件
+
+The repository provides `requirements-dev.txt`, which includes the runtime requirements plus pytest. / 專案的 `requirements-dev.txt` 包含正式執行環境依賴及 pytest 測試套件。
+
+```bash
+cd ~/projects/linux-server-monitor
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pytest --version
+```
+
+### Run Tests / 執行測試
+
+```bash
+python -m pytest -v
+python -m pytest -q
+```
+
+`-v` shows detailed test case names, while `-q` summarizes results more compactly. A zero exit code and all tests marked PASSED indicate that the tested functions met their assertions. / `-v` 查看每個案例的測試結果，`-q` 精簡輸出；所有測試通過代表本次涵蓋的功能符合斷言條件。
+
+The v0.4 suite in `tests/test_monitoring.py` covers these cases / 測試涵蓋：
+
+| Test area / 測試範圍 | Expected result / 預期結果 |
+|---|---|
+| Health endpoint (database available) / 資料庫正常 | HTTP 200, `healthy` |
+| Health endpoint (database missing) / 資料庫不存在 | HTTP 503, `unhealthy` |
+| History limit / 歷史筆數限制 | Latest N records returned correctly / 回傳最新 N 筆 |
+| Invalid history limits / 錯誤參數（0、負數、過大、非數字） | HTTP 400 |
+| Seven-day retention / 七天資料保留 | Old sample deleted; recent sample preserved / 舊資料刪除、新資料保留 |
+| Dashboard home / 首頁 | HTTP 200 |
+
+The tests use pytest's `tmp_path` and `monkeypatch` to create an isolated database and redirect `database.DB_PATH`. **They should not use or delete your actual `data/metrics.db`.** / pytest 測試透過 `tmp_path` 和 `monkeypatch` 指向獨立的暫存資料庫，不應操作正式監控資料。
+
+**Testing note / 測試說明：** This suite focuses on database and Flask behavior. It does not by itself verify a real reboot, CDN access, end-to-end Windows networking, or that a systemd Timer is running; those require separate operational checks. / 自動化測試不能取代實機重開機、跨主機連線與 Timer 維運驗證。
+
+---
+
+## 16. v0.4 Verification Record / v0.4 驗收紀錄
+
+The project author reported completing and successfully checking the v0.4 implementation. The following is a **record of reported results**, not a claim that this document independently ran tests on the VM. / 依專案作者回報，v0.4 功能與操作測試均已完成。此表為**已完成紀錄**，不使用待勾選項目，也不宣稱重新遠端驗證。
+
+| Test / 驗證項目 | Verification method / 驗證方式 | Recorded result / 紀錄 |
+|---|---|---|
+| SQLite storage / 資料庫儲存 | `python collect_once.py` and SQL `COUNT(*)` / 手動收集與 SQL 統計 | Passed / 通過 |
+| Automatic collection / 自動收集 | `metrics-collector.timer` active, records increase / Timer 運作、筆數增加 | Passed / 通過 |
+| Collector logs / 收集日誌 | `journalctl -u metrics-collector.service` / 查看日誌 | Passed / 通過 |
+| History API / 歷史資料 | `GET /api/history?limit=5` returns JSON / API 查詢正常 | Passed / 通過 |
+| API validation / 參數驗證 | Invalid `limit` returns HTTP 400 / 錯誤參數被拒絕 | Passed / 通過 |
+| CPU/RAM charts / 歷史圖表 | Browser chart display and sample selector / 瀏覽器折線圖及選單 | Passed / 通過 |
+| Health API / 健康檢查 | `GET /api/health` returns expected healthy result / 基本健康狀態 | Passed / 通過 |
+| Python logging / 日誌功能 | Collector INFO logs inspected / 收集成功日誌 | Passed / 通過 |
+| Data retention / 資料清理 | Seven-day retention tested with isolated old/new sample data / 測試資料新舊紀錄處理 | Passed / 通過 |
+| Automated tests / 自動化測試 | `python -m pytest -q` / 執行測試套件 | Passed / 通過 |
+| Existing endpoints / 原功能 | Dashboard and `/api/system` continue working / 原有功能正常 | Passed / 通過 |
+
+**Final local release checks / 發布前最後確認：**
+
+```bash
+systemctl status linux-server-monitor --no-pager
+systemctl status metrics-collector.timer --no-pager
+systemctl show metrics-collector.service -p Result -p ExecMainStatus
+curl -i http://127.0.0.1/api/health
+curl -i "http://127.0.0.1/api/history?limit=5"
+python -m pytest -q
+```
+
+Use the outputs on **your own Ubuntu VM** as the authoritative evidence when releasing. / 正式發布時，以上指令在你 Ubuntu 上的實際輸出才是最終驗證依據。
+
+---
+
+## 17. v0.4 Troubleshooting / v0.4 故障排除
+
+| Symptom / 現象 | First check / 優先檢查 |
+|---|---|
+| Timer does not run / Timer 沒啟動 | `systemctl status metrics-collector.timer --no-pager` and `systemctl list-timers --all` |
+| Collector exits with error / 收集程式失敗 | `systemctl show metrics-collector.service -p Result -p ExecMainStatus`, then `sudo journalctl -u metrics-collector.service -n 50 --no-pager` |
+| No SQLite history / 沒有歷史資料 | Run `python collect_once.py` and query `SELECT COUNT(*) FROM system_metrics;` |
+| SQLite permission error / 資料庫權限錯誤 | Verify `User=xilin`, project path and ownership of `data/`; avoid running collectors as different users |
+| `/api/history` returns 500 / API 發生伺服器錯誤 | Inspect `sudo journalctl -u linux-server-monitor -n 50 --no-pager`; verify DB path and table |
+| `/api/health` returns 503 / 健康檢查失敗 | Confirm `data/metrics.db` and `system_metrics` table exist and are readable |
+| Charts missing / 圖表不顯示 | Browser F12 Console/Network; check CDN access, `/static/history.js`, and History API response |
+| Charts show old data / 歷史數據不更新 | Check Timer status, collection timestamps, chart selector, and browser caching |
+| pytest fails / 測試失敗 | Activate `.venv`; install `requirements-dev.txt`; inspect specific assertion and ensure test DB isolation |
+
+**Important / 注意：** A successful Health API response is not proof that sampling is fresh. Query the last `collected_at` and check Timer logs when diagnosing stale metrics. / `/api/health` 成功不代表歷史資料一定有持續更新；需查看最後收集時間及 Timer 日誌。
+
+---
+
+## 18. Future Work / 後續規劃
+
+The historical database, charts, health check, logging, retention policy and pytest testing belong to **v0.4 Completed**, not Future Work. / SQLite、歷史圖表、健康檢查、Logging、資料保留及 pytest 已列為 v0.4 完成項目，不再放入未來規劃。
+
+### v0.5 — Docker Containerization / Docker 容器化
+
+- Create a `Dockerfile` and learn image builds and container lifecycle. / 撰寫 Dockerfile、理解映像與容器生命週期。
+- Configure ports, volumes, Docker Compose and persistent storage. / 學習 Port Mapping、Volume、Compose 與資料持久化。
+- Investigate host-versus-container resource reporting with psutil. / 驗證容器內 psutil 監控數據的來源，避免混淆主機與容器指標。
+
+### v0.6 — GitHub Actions CI/CD / 自動化流程
+
+- Run pytest automatically on push and pull requests. / 在 GitHub Push、PR 時自動執行測試。
+- Explore automated Docker image builds and deployment workflows. / 探索 Docker Image 自動建置與部署。
+
+### v1.0 — Production-Oriented Improvements / 正式環境強化
+
+- Introduce authentication, HTTPS/TLS, and access controls. / 加入身分驗證、HTTPS 和權限控管。
+- Improve metrics freshness checks, alerting and long-term retention strategies. / 增加資料新鮮度檢查、告警及長期保留設計。
+- Extend test coverage and improve portability beyond the original VMware environment. / 擴充測試並提升跨環境部署能力。
+
+---
 
 ## Current Status / 目前狀態
 
-**v0.3 — systemd Service Management (Completed / 已完成)**
+**v0.4 — Monitoring & Reliability (Completed / 已完成，依專案作者驗證紀錄)**
 
-Gunicorn, Nginx, and systemd deployment are documented and have passed the project author's verification, including startup, SSH independence, reboot recovery, logging, and failure recovery.
+The project now documents a working Linux monitoring deployment, historical SQLite metrics, scheduled collection, REST APIs, browser history charts, health checks, logging, seven-day retention and automated tests. The v0.3 deployment guide remains intact for reproducibility; v0.5 Docker containerization is the next planned milestone.
 
-已完成 Gunicorn、Nginx 與 systemd 的整合部署及驗收，並保留可重現的操作指令、故障排除方法和測試紀錄。
+目前已完成 v0.3 的 Linux Web Service 部署，以及 v0.4 的歷史監控、排程、視覺化與基本可靠性測試。原有的 Gunicorn、Nginx、systemd 教學保留在前半部，Docker 容器化則規劃為下一階段。

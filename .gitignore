@@ -20,3 +20,6 @@ __pycache__/
 
 # SQLite runtime data
 data/
+
+# Testing cache
+.pytest_cache/

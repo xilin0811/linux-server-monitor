@@ -103,3 +103,62 @@ def get_recent_metrics(limit=60):
 
     finally:
         conn.close()
+
+
+def is_database_healthy():
+    """
+    檢查 SQLite 是否存在，以及 system_metrics 資料表能否正常查詢。
+    回傳 True 或 False。
+    """
+
+    conn = None
+
+    try:
+        # 避免健康檢查意外建立全新的空資料庫
+        if not DB_PATH.is_file():
+            return False
+
+        conn = sqlite3.connect(DB_PATH, timeout=5)
+
+        # 確認監控資料表可以讀取
+        conn.execute(
+            "SELECT id FROM system_metrics LIMIT 1"
+        ).fetchone()
+
+        return True
+
+    except (sqlite3.Error, OSError):
+        return False
+
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def delete_old_metrics(days=7):
+    """
+    刪除超過指定天數的監控紀錄。
+    預設保留最近 7 天。
+    回傳實際刪除的筆數。
+    """
+
+    if days < 1:
+        raise ValueError("days must be greater than 0")
+
+    # 取得保留期限的時間門檻
+    cutoff = int(time.time()) - (days * 24 * 60 * 60)
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+
+    try:
+        cursor = conn.execute("""
+            DELETE FROM system_metrics
+            WHERE collected_at < ?
+        """, (cutoff,))
+
+        conn.commit()
+
+        return cursor.rowcount
+
+    finally:
+        conn.close()

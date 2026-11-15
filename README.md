@@ -1,6 +1,6 @@
 # Linux Server Monitoring Dashboard
 
-> **Project version / 專案版本：** v0.3 — systemd Service Management (**Completed / 已完成**)  
+> **Project version / 專案版本：** v0.4 — Monitoring & Reliability (Completed) 
 > **Language / 語言：** English + 繁體中文
 
 A lightweight, browser-based Linux system monitoring application built with **Python, Flask, psutil, HTML, CSS, and JavaScript**, deployed using **Gunicorn and Nginx**. Version v0.3 integrates **systemd service management** for automatic startup, process supervision, and failure recovery.
@@ -328,27 +328,37 @@ linux-server-monitor/
 
 These results record the tests completed in the author's Ubuntu VMware learning environment. / 以上為專案作者於 Ubuntu VMware 學習環境完成的驗證紀錄。
 
-### Future Work / 未來規劃
+### v0.4 — Monitoring & Reliability（已完成 / Completed）
 
-The following features are planned for subsequent versions and are **not part of the completed v0.3 release**. / 以下為後續版本的開發方向，不屬於本次 v0.3 已完成功能。
+- Implemented SQLite-based historical metrics storage.
+- Automated metrics collection using systemd Timer.
+- Added `/api/history` for historical monitoring data.
+- Added CPU and Memory usage history charts using Chart.js.
+- Implemented `/api/health` to check Flask and SQLite availability.
+- Added structured Python logging for metrics collection.
+- Implemented a 7-day data retention policy.
+- Added automated database and API tests using pytest.
 
-- **Monitoring history and visualization / 歷史監控與視覺化：** Store CPU and memory measurements over time and add trend charts to the dashboard（保存監控數據並新增歷史折線圖）。
-- **Reliability and automated testing / 可靠性與自動化測試：** Add health-check endpoints, API tests, and clearer failure diagnostics（建立健康檢查、API 測試及故障診斷流程）。
-- **Docker containerization / Docker 容器化：** Package the application using Docker and document container networking and deployment（將應用程式封裝成容器，學習映像檔與網路設定）。
-- **CI/CD with GitHub Actions / 持續整合與部署：** Automate testing and build workflows on GitHub（以 GitHub Actions 執行自動化測試與建置）。
-- **Security hardening / 安全性強化：** Introduce authentication, HTTPS, and access restrictions before considering wider network exposure（加入身分驗證、HTTPS 與存取限制）。
+**中文摘要：**
 
-## Security and Limitations / 安全性與限制
+完成歷史監控資料的收集、儲存、查詢與視覺化，
+並加入健康檢查、日誌紀錄、歷史資料清理及自動化測試，
+提升監控系統的可維護性與可靠性。
 
-- The Flask development server is for development only.（Flask 內建 Server 不作為正式部署入口。）
-- Gunicorn listens on `127.0.0.1:5000`.（Gunicorn 僅允許 Ubuntu 本機連線。）
-- Nginx currently serves HTTP rather than HTTPS.（目前沒有 TLS 加密。）
-- The monitoring API does not require authentication.（目前 API 不需登入。）
-- The systemd unit contains sample machine-specific paths.（其他環境部署前需修改帳號與路徑。）
-- **Do not expose this dashboard to the public internet without appropriate protection.**（請勿將此測試網站直接公開到網際網路。）
+## Future Work / 後續規劃
 
-## Project Status / 專案狀態
+### v0.5 — Docker Containerization
+- Package the Flask application using Docker.
+- Learn Dockerfile, Images, Containers, and Port Mapping.
+- Introduce Docker Compose.
+- Investigate host-level monitoring from inside containers.
 
-**Current completed milestone: v0.3 — systemd Service Management (Completed).**
+### v0.6 — CI/CD with GitHub Actions
+- Run pytest automatically on GitHub.
+- Automate Docker image builds.
+- Explore automated deployment workflows.
 
-目前已完成 Gunicorn + Nginx 部署、systemd 服務管理、開機自動啟動、SSH 中斷與重開機後持續提供服務，以及異常恢復測試。此版本已完成驗收，後續開發方向請參考上方 **Future Work / 未來規劃**。
+### v1.0 — Production-Oriented Improvements
+- Improve security with authentication and HTTPS.
+- Add monitoring alerts and configurable thresholds.
+- Improve documentation, tests, and deployment portability.
