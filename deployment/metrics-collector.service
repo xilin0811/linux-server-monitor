@@ -1,0 +1,11 @@
+
+[Unit]
+Description=Collect Linux system metrics into SQLite
+
+[Service]
+Type=oneshot
+User=xilin
+Group=xilin
+WorkingDirectory=/home/xilin/projects/linux-server-monitor
+
+ExecStart=/home/xilin/projects/linux-server-monitor/.venv/bin/python /home/xilin/projects/linux-server-monitor/collect_once.py
