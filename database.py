@@ -68,3 +68,38 @@ def save_metric(metrics):
 
     finally:
         conn.close()
+
+def get_recent_metrics(limit=60):
+    """
+    讀取最近 limit 筆監控紀錄。
+    回傳順序：最舊到最新，方便前端畫折線圖。
+    """
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+
+    # 將查詢結果轉換為可使用欄位名稱的 Row
+    conn.row_factory = sqlite3.Row
+
+    try:
+        cursor = conn.execute("""
+            SELECT
+                id,
+                collected_at,
+                cpu_percent,
+                memory_percent,
+                disk_percent
+            FROM system_metrics
+            ORDER BY collected_at DESC, id DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+
+        # SQL 先取得最新的 N 筆，
+        # 再反轉成最舊到最新，方便繪製時間軸
+        records = [dict(row) for row in reversed(rows)]
+
+        return records
+
+    finally:
+        conn.close()
