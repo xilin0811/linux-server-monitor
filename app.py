@@ -1,5 +1,4 @@
-
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 from monitor import get_system_info
 
 app = Flask(__name__)
@@ -7,10 +6,7 @@ app = Flask(__name__)
 # 預設的route
 @app.route("/")
 def home():
-    return {
-        "message": "Ubuntu Server Monitoring API",
-        "status": "running"
-    }
+    return render_template("index.html")
 
 # /api/system是自己建立的名稱，這個路徑是用來提供系統資訊的API端點。也可以自己命名為/server-info
 @app.route("/api/system", methods=["GET"])
