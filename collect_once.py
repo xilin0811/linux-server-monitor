@@ -1,6 +1,7 @@
-
 import logging
-
+import json
+import os
+import time
 from monitor import get_system_info
 from database import (
     DB_PATH,
@@ -19,6 +20,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def save_latest_snapshot(metrics):
+    """將最新的 Ubuntu 主機數據保存為 JSON。"""
+
+    snapshot_path = DB_PATH.parent / "latest.json"
+
+    snapshot = {
+        **metrics,
+        "collected_at": int(time.time())
+    }
+
+    # 每個程序使用獨立暫存檔，避免同時寫入同一個檔案
+    temp_path = snapshot_path.with_name(
+        f".latest-{os.getpid()}.tmp"
+    )
+
+    try:
+        with temp_path.open("w", encoding="utf-8") as file:
+            json.dump(snapshot, file, ensure_ascii=False)
+
+        # 使用原子替換，避免其他程序讀到只寫了一半的 JSON
+        os.replace(temp_path, snapshot_path)
+
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
 def main():
     try:
         # 1. 初始化資料庫
@@ -29,6 +57,7 @@ def main():
 
         # 3. 寫入 SQLite
         record_id = save_metric(metrics)
+        save_latest_snapshot(metrics)
         # 刪除超過 7 天的歷史資料
         deleted_count = delete_old_metrics(days=7)
 

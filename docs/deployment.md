@@ -898,15 +898,103 @@ Use the outputs on **your own Ubuntu VM** as the authoritative evidence when rel
 
 ---
 
-## 18. Future Work / 後續規劃
+## 18. v0.5 — Docker Containerization / Docker 容器化部署
+
+### Deployment Architecture / 部署架構
+
+The monitoring dashboard is containerized using Docker Compose.
+The host metrics collector remains managed by Ubuntu systemd.
+
+Ubuntu Host:
+- systemd Timer runs `collect_once.py`.
+- SQLite stores historical data in `data/metrics.db`.
+- The latest complete metrics are saved in `data/latest.json`.
+
+Docker Container:
+- Gunicorn serves the Flask application.
+- The Dashboard is available on Ubuntu loopback Port 5003.
+- The host `data/` directory is mounted read-only to `/app/data`.
+- The container does not perform host resource sampling directly.
+
+### Prerequisites / 部署前置條件
+
+- Ubuntu 24.04 LTS
+- Docker Engine
+- Docker Compose Plugin
+- Working v0.4 host metrics collector
+- Existing SQLite database and latest.json
+- Read permissions for Container UID 10001
+
+### Build and Run / 建置與啟動
+
+```bash
+cd ~/projects/linux-server-monitor
+python collect_once.py
+sudo docker compose config
+sudo docker compose up -d --build
+```
+
+### Verify / 驗證
+
+```bash
+sudo docker compose ps
+curl -i http://127.0.0.1:5003/api/health
+curl -i http://127.0.0.1:5003/api/system
+curl -i "http://127.0.0.1:5003/api/history?limit=5"
+```
+
+### Logs / 日誌
+
+Docker Dashboard:
+
+```bash
+sudo docker compose logs --tail=30 dashboard
+```
+
+Ubuntu Host Collector:
+
+```bash
+sudo journalctl -u metrics-collector.service -n 30 --no-pager
+```
+
+### Stop and Restart / 停止與重啟
+
+Stop the Docker application:
+
+```bash
+sudo docker compose down
+```
+
+Rebuild and restart:
+
+```bash
+sudo docker compose up -d --build
+```
+
+The host SQLite data is not deleted by these commands.
+
+### Troubleshooting / 故障排除
+
+- HTTP 503: verify the host collector and Snapshot freshness.
+- SQLite unavailable: verify the Bind Mount and read permissions.
+- Container unhealthy: inspect Docker Health Check and logs.
+- Port conflict: check whether Port 5003 is already occupied.
+- Host metrics not updating: inspect the Ubuntu systemd Timer.
+
+### Security and Limitations / 安全性與限制
+
+- Port 5003 is bound to Ubuntu 127.0.0.1.
+- The SQLite data directory is mounted read-only.
+- The application runs as a non-root user.
+- No authentication or HTTPS is configured.
+- The containerized Dashboard depends on the Ubuntu host collector.
+- Monitoring updates approximately every 30 seconds.
+- The current deployment is intended for a trusted learning VM.
+- Do not expose the application directly to the public internet.
+
+## 19. Future Work / 後續規劃
 
 The historical database, charts, health check, logging, retention policy and pytest testing belong to **v0.4 Completed**, not Future Work. / SQLite、歷史圖表、健康檢查、Logging、資料保留及 pytest 已列為 v0.4 完成項目，不再放入未來規劃。
-
-### v0.5 — Docker Containerization / Docker 容器化
-
-- Create a `Dockerfile` and learn image builds and container lifecycle. / 撰寫 Dockerfile、理解映像與容器生命週期。
-- Configure ports, volumes, Docker Compose and persistent storage. / 學習 Port Mapping、Volume、Compose 與資料持久化。
-- Investigate host-versus-container resource reporting with psutil. / 驗證容器內 psutil 監控數據的來源，避免混淆主機與容器指標。
 
 ### v0.6 — GitHub Actions CI/CD / 自動化流程
 
@@ -921,10 +1009,3 @@ The historical database, charts, health check, logging, retention policy and pyt
 
 ---
 
-## Current Status / 目前狀態
-
-**v0.4 — Monitoring & Reliability (Completed / 已完成，依專案作者驗證紀錄)**
-
-The project now documents a working Linux monitoring deployment, historical SQLite metrics, scheduled collection, REST APIs, browser history charts, health checks, logging, seven-day retention and automated tests. The v0.3 deployment guide remains intact for reproducibility; v0.5 Docker containerization is the next planned milestone.
-
-目前已完成 v0.3 的 Linux Web Service 部署，以及 v0.4 的歷史監控、排程、視覺化與基本可靠性測試。原有的 Gunicorn、Nginx、systemd 教學保留在前半部，Docker 容器化則規劃為下一階段。
