@@ -1,6 +1,6 @@
 # Linux Server Monitoring Dashboard
 
-> **Project version / 專案版本：** v0.4 — Monitoring & Reliability (Completed) 
+> **Project version / 專案版本：** v0.5 — Docker Containerization (Completed)
 > **Language / 語言：** English + 繁體中文
 
 A lightweight, browser-based Linux system monitoring application built with **Python, Flask, psutil, HTML, CSS, and JavaScript**, deployed using **Gunicorn and Nginx**. Version v0.3 integrates **systemd service management** for automatic startup, process supervision, and failure recovery.
@@ -345,13 +345,73 @@ These results record the tests completed in the author's Ubuntu VMware learning 
 並加入健康檢查、日誌紀錄、歷史資料清理及自動化測試，
 提升監控系統的可維護性與可靠性。
 
-## Future Work / 後續規劃
 
-### v0.5 — Docker Containerization
-- Package the Flask application using Docker.
-- Learn Dockerfile, Images, Containers, and Port Mapping.
-- Introduce Docker Compose.
-- Investigate host-level monitoring from inside containers.
+### v0.5 — Docker Containerization (Completed / 已完成)
+
+- Created a Dockerfile based on Python 3.12 Slim.
+- Added `.dockerignore` to exclude runtime data and development files.
+- Configured a non-root application user.
+- Built and tested Docker Images and Containers.
+- Practiced Docker Bridge Networking and Port Publishing.
+- Verified SQLite persistence with Docker Named Volumes.
+- Added Docker Compose for application deployment.
+- Implemented a read-only Bind Mount for host monitoring data.
+- Integrated Ubuntu host metrics with the containerized Dashboard.
+- Added Host Snapshot freshness checks and automated tests.
+
+**中文摘要：**
+
+完成 Flask Monitoring Dashboard 的 Docker 容器化，
+實作 Image Build、Container、Network、Volume 與 Docker Compose。
+
+最終部署採混合式架構：Ubuntu systemd Timer 負責
+收集主機監控資料，Docker Container 負責 Flask API
+與 Dashboard，並透過唯讀 Bind Mount 存取 SQLite
+及最新監控資料。
+
+### Run with Docker Compose / Docker Compose 部署
+
+Prerequisite: Docker Engine and Docker Compose installed on Ubuntu.
+
+The Ubuntu host collector must already be configured and running.
+
+```bash
+sudo systemctl status metrics-collector.timer --no-pager
+python collect_once.py
+sudo docker compose up -d --build
+sudo docker compose ps
+```
+
+API endpoints:
+
+- Dashboard: `http://127.0.0.1:5003/`
+- System API: `http://127.0.0.1:5003/api/system`
+- History API: `http://127.0.0.1:5003/api/history`
+- Health API: `http://127.0.0.1:5003/api/health`
+
+The Docker test port is bound to Ubuntu's loopback interface.
+Use SSH Port Forwarding to access it from Windows.
+
+### Monitoring Scope / 監控範圍
+
+- Ubuntu Host Collector: gathers actual Ubuntu VM metrics.
+- Docker Dashboard: reads the host-collected metrics.
+- Collection interval: approximately 30 seconds.
+- SQLite retention: 7 days.
+- Docker data access: read-only Bind Mount.
+- Docker deployment: web application containerized;
+  the host metrics collector remains managed by systemd.
+
+### Verification / 驗收
+
+- Docker build and Compose deployment passed.
+- Container networking and port publishing verified.
+- Named Volume persistence verified in the lab.
+- Read-only host data access verified.
+- Host Snapshot freshness checks verified.
+- Flask API and pytest tests passed.
+
+## Future Work / 後續規劃
 
 ### v0.6 — CI/CD with GitHub Actions
 - Run pytest automatically on GitHub.

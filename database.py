@@ -1,4 +1,4 @@
-
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -9,6 +9,22 @@ BASE_DIR = Path(__file__).resolve().parent
 # SQLite 資料庫路徑
 DB_PATH = BASE_DIR / "data" / "metrics.db"
 
+def open_read_connection(timeout=10):
+    """根據環境變數建立一般或唯讀 SQLite 連線。"""
+
+    if os.getenv("DB_READ_ONLY") == "1":
+        uri = DB_PATH.as_uri() + "?mode=ro"
+
+        return sqlite3.connect(
+            uri,
+            uri=True,
+            timeout=timeout
+        )
+
+    return sqlite3.connect(
+        DB_PATH,
+        timeout=timeout
+    )
 
 def init_database():
     """建立 SQLite 資料庫及資料表。"""
@@ -75,7 +91,7 @@ def get_recent_metrics(limit=60):
     回傳順序：最舊到最新，方便前端畫折線圖。
     """
 
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = open_read_connection(timeout=10)
 
     # 將查詢結果轉換為可使用欄位名稱的 Row
     conn.row_factory = sqlite3.Row
@@ -118,7 +134,7 @@ def is_database_healthy():
         if not DB_PATH.is_file():
             return False
 
-        conn = sqlite3.connect(DB_PATH, timeout=5)
+        conn = open_read_connection(timeout=5)
 
         # 確認監控資料表可以讀取
         conn.execute(
