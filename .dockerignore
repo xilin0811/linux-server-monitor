@@ -1,0 +1,39 @@
+# Git history
+.git/
+.gitignore
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python temporary files
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Runtime database files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Development files
+.vscode/
+tests/
+requirements-dev.txt
+
+# Documentation and deployment examples
+docs/
+deployment/
+screenshots/
+README.md
+
+# Logs
+*.log
