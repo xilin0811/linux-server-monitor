@@ -1,7 +1,6 @@
 
-name: CI - Python Tests
+name: CI - Python Tests and Docker Build
 
-# When should the workflow run?
 on:
   push:
     branches:
@@ -14,16 +13,14 @@ on:
 
   workflow_dispatch:
 
-# Give the workflow only the repository permissions it needs
 permissions:
   contents: read
 
 jobs:
+  # Job 1: Python automated tests
   python-tests:
     name: Python 3.12 / pytest
-
     runs-on: ubuntu-24.04
-
     timeout-minutes: 10
 
     steps:
@@ -52,3 +49,73 @@ jobs:
       - name: Run automated tests
         run: |
           python -m pytest -v
+
+  # Job 2: Docker build and smoke test
+  docker-build:
+    name: Docker Build / Smoke Test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    # Run only after the Python tests succeed
+    needs: python-tests
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build Docker image
+        run: |
+          docker build --progress=plain \
+            -t linux-server-monitor:ci .
+
+      - name: Inspect Docker image
+        run: |
+          docker image inspect linux-server-monitor:ci \
+            --format '{{.Id}}'
+
+      - name: Run container smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run -d \
+            --name monitor-ci \
+            -p 127.0.0.1:5004:5000 \
+            linux-server-monitor:ci
+
+          trap 'docker rm -f monitor-ci >/dev/null 2>&1 || true' EXIT
+
+          # Wait until the Flask Health API becomes available
+          ready=0
+
+          for attempt in {1..20}; do
+            if curl -fsS \
+              http://127.0.0.1:5004/api/health \
+              > /tmp/monitor-ci-health.json 2>/dev/null; then
+              ready=1
+              break
+            fi
+
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Container health check failed."
+            docker logs monitor-ci
+            exit 1
+          fi
+
+          # Verify the health response
+          python3 -c 'import json; d=json.load(open("/tmp/monitor-ci-health.json")); assert d["status"]=="healthy" and d["database"]=="ok"; print(d)'
+
+          # Verify system metrics API
+          curl -fsS http://127.0.0.1:5004/api/system \
+            | python3 -m json.tool
+
+          # Verify history API
+          curl -fsS "http://127.0.0.1:5004/api/history?limit=5" \
+            | python3 -m json.tool
+
+          echo "Docker smoke tests passed."
