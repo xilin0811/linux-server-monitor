@@ -1,0 +1,91 @@
+
+name: CD - Publish Docker Image
+
+# Only publish when a version tag is pushed
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-image:
+    name: Build, test and publish to GHCR
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    env:
+      IMAGE_NAME: ghcr.io/xilin0811/linux-server-monitor
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build release Docker image
+        run: |
+          docker build --progress=plain \
+            --label "org.opencontainers.image.source=https://github.com/xilin0811/linux-server-monitor" \
+            -t "${IMAGE_NAME}:${RELEASE_TAG}" .
+
+      - name: Smoke test release image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run -d \
+            --name monitor-release-test \
+            -p 127.0.0.1:5004:5000 \
+            "${IMAGE_NAME}:${RELEASE_TAG}"
+
+          trap 'docker rm -f monitor-release-test >/dev/null 2>&1 || true' EXIT
+
+          ready=0
+
+          for attempt in {1..30}; do
+            if curl -fsS \
+              http://127.0.0.1:5004/api/health \
+              > /dev/null 2>&1; then
+              ready=1
+              break
+            fi
+
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Release container failed to become healthy."
+            docker logs monitor-release-test
+            exit 1
+          fi
+
+          curl -fsS \
+            http://127.0.0.1:5004/api/system \
+            | python3 -m json.tool > /dev/null
+
+          curl -fsS \
+            "http://127.0.0.1:5004/api/history?limit=5" \
+            | python3 -m json.tool > /dev/null
+
+          echo "Release smoke tests passed."
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Docker image
+        run: |
+          docker push "${IMAGE_NAME}:${RELEASE_TAG}"
+
+      - name: Print published image
+        run: |
+          echo "Published: ${IMAGE_NAME}:${RELEASE_TAG}"
