@@ -346,7 +346,7 @@ These results record the tests completed in the author's Ubuntu VMware learning 
 提升監控系統的可維護性與可靠性。
 
 
-### v0.5 — Docker Containerization (Completed / 已完成)
+### v0.5 — Docker Containerization（已完成 / Completed）
 
 - Created a Dockerfile based on Python 3.12 Slim.
 - Added `.dockerignore` to exclude runtime data and development files.
@@ -411,12 +411,58 @@ Use SSH Port Forwarding to access it from Windows.
 - Host Snapshot freshness checks verified.
 - Flask API and pytest tests passed.
 
+### v0.6 — GitHub Actions CI/CD（已完成 / Completed）
+
+- Added automated Python tests using GitHub Actions.
+- Added Docker image build and container smoke tests.
+- Implemented Pull Request-based development workflow.
+- Configured branch protection with required CI checks.
+- Added version-tag-based Docker image publishing to GHCR.
+- Integrated GitHub Actions authentication with GITHUB_TOKEN.
+
+**中文摘要：**
+
+導入 GitHub Actions 自動化流程，在 Push 或 Pull Request
+時執行 Python pytest、Docker Build 及 Flask API Smoke Test。
+
+透過 Branch Ruleset 保護 main 分支，要求 CI 檢查成功後
+才能合併程式碼。
+
+使用 Git Version Tag 觸發 Docker Image 發布，
+將已驗證的 Image 上傳至 GitHub Container Registry。
+
+### CI/CD Workflow
+
+1. Push code to a feature branch.
+2. Create a Pull Request targeting main.
+3. Run Python and Docker CI checks.
+4. Merge after required checks pass.
+5. Create and push a release tag.
+6. Publish the verified Docker image to GHCR.
+
+### Docker Image
+
+After publishing v0.6.0, the image can be downloaded with:
+
+```bash
+docker pull ghcr.io/xilin0811/linux-server-monitor:v0.6.0
+```
+
+The published image supports standalone container mode.
+
+The Ubuntu host monitoring deployment requires a separately
+configured host collector and read-only bind-mounted data.
+
+### Current Limitations
+
+- GitHub Actions does not deploy directly to the local VMware VM.
+- The project has no public production deployment.
+- Authentication and HTTPS are not yet configured.
+- The current CI smoke test does not validate all host-specific metrics.
+
 ## Future Work / 後續規劃
 
-### v0.6 — CI/CD with GitHub Actions
-- Run pytest automatically on GitHub.
-- Automate Docker image builds.
-- Explore automated deployment workflows.
+
 
 ### v1.0 — Production-Oriented Improvements
 - Improve security with authentication and HTTPS.

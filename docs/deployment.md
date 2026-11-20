@@ -992,14 +992,74 @@ The host SQLite data is not deleted by these commands.
 - The current deployment is intended for a trusted learning VM.
 - Do not expose the application directly to the public internet.
 
-## 19. Future Work / 後續規劃
+---
+
+## 19. v0.6 — GitHub Actions CI/CD & GHCR Deployment
+
+### 1. CI/CD Workflow / 自動化流程
+
+This project uses GitHub Actions to automate testing and Docker image publishing.
+
+本專案使用 GitHub Actions 建立 CI/CD 自動化流程：
+
+1. Push code to a feature branch.
+2. Run Python syntax checks and pytest.
+3. Build the Docker image and run Flask API smoke tests.
+4. Create a Pull Request and pass required CI checks.
+5. Merge the Pull Request into `main`.
+6. Push a version tag (e.g., `v0.6.0`) to publish the Docker image to GHCR.
+
+**Note:** GitHub Actions runs on a separate GitHub-hosted runner, not on the local VMware Ubuntu server. CI/CD does not automatically modify the local Ubuntu deployment.
+
+### 2. Pull Docker Image / 下載映像檔
+
+After the release image has been published to GHCR:
+
+```bash
+sudo docker pull ghcr.io/xilin0811/linux-server-monitor:v0.6.0
+```
+
+If the GHCR package is private, registry authentication with appropriate permissions is required.
+
+### 3. Run the Container / 啟動容器
+
+Start a standalone test container:
+
+```bash
+sudo docker run -d \
+  --name monitor-v06-registry-test \
+  -p 127.0.0.1:5006:5000 \
+  ghcr.io/xilin0811/linux-server-monitor:v0.6.0
+```
+
+Verify the Flask API:
+
+```bash
+curl -i http://127.0.0.1:5006/api/health
+curl -i http://127.0.0.1:5006/api/system
+curl -i "http://127.0.0.1:5006/api/history?limit=5"
+```
+
+Stop and remove the test container:
+
+```bash
+sudo docker stop monitor-v06-registry-test
+sudo docker rm monitor-v06-registry-test
+```
+
+### 4. Deployment Notes / 部署注意事項
+
+- The GHCR image can be downloaded without rebuilding the Dockerfile locally.
+- The standalone test container uses its own SQLite database.
+- The production-style Ubuntu host monitoring setup still requires the host systemd collector and read-only bind mount.
+- GitHub Actions does not automatically deploy to the local VMware VM.
+- Published images should be verified before updating an existing deployment.
+- Port 5006 is bound to Ubuntu's loopback interface and is not directly exposed to the external network.
+
+## 20. Future Work / 後續規劃
 
 The historical database, charts, health check, logging, retention policy and pytest testing belong to **v0.4 Completed**, not Future Work. / SQLite、歷史圖表、健康檢查、Logging、資料保留及 pytest 已列為 v0.4 完成項目，不再放入未來規劃。
 
-### v0.6 — GitHub Actions CI/CD / 自動化流程
-
-- Run pytest automatically on push and pull requests. / 在 GitHub Push、PR 時自動執行測試。
-- Explore automated Docker image builds and deployment workflows. / 探索 Docker Image 自動建置與部署。
 
 ### v1.0 — Production-Oriented Improvements / 正式環境強化
 
