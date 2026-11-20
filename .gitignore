@@ -23,3 +23,13 @@ data/
 
 # Testing cache
 .pytest_cache/
+
+# Monitoring runtime data
+data/
+
+# Pytest runtime cache
+.pytest_cache/
+
+# Local coverage reports
+.coverage
+htmlcov/
